@@ -1,0 +1,4 @@
+# Escludi tutti i file JSON
+data/*.json
+
+ 
