@@ -10,9 +10,9 @@ AI Analyzer è un'applicazione in Python progettata per analizzare conversazioni
 
 ## ⚙️ Come funziona  
 
-1. 📂 L'utente carica un file contenente domande e risposte di una conversazione.  
+1. 📂 L'utente carica un file contenente un file di testo.  
 2. 🔢 Il programma elabora i dati e li vettorizza per renderli compatibili con il modello di machine learning.  
-3. 🏷️ Il classificatore determina se ciascuna risposta è stata generata da un'AI o da un essere umano.  
+3. 🏷️ Il classificatore determina se ciascuna frase è stata generata da un'AI o da un essere umano.  
 4. 📊 I risultati vengono mostrati all'utente tramite l'interfaccia grafica.  
 
 ## 🧠 Modelli Utilizzati  
