@@ -1,4 +1,5 @@
 import joblib
+import math  
 import tkinter as tk
 import numpy as np
 from tkinter import scrolledtext
@@ -10,10 +11,50 @@ from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import accuracy_score, classification_report
 from sklearn.metrics import precision_recall_curve
 from sklearn.model_selection import train_test_split
+from sklearn.calibration import CalibratedClassifierCV
+import matplotlib.pyplot as plt
+
 
 import nltk
 import os
 import pickle
+from collections import Counter
+from sklearn.metrics.pairwise import cosine_similarity
+
+def compute_ai_centroid(vectorizer, conversations):
+    """
+    Calcola il centroide delle frasi AI a partire dalle conversazioni.
+    Usa le risposte AI già processate (cleaned) per creare un vettore medio.
+    """
+    ai_texts = [clean_text(convo["ai_response"]) for convo in conversations if convo["ai_response"]]
+    if not ai_texts:
+        print("Nessuna frase AI trovata per il calcolo del centroide.")
+        return None
+    # Trasforma le frasi AI in vettori e calcola la media
+    X_ai = vectorizer.transform(ai_texts)
+    centroid = np.array(X_ai.mean(axis=0))
+    return centroid
+
+def classify_sentence_similarity(sentence, vectorizer, ai_centroid, threshold=0.07):
+    """
+    Classifica una frase basandosi sulla similarità con il centroide delle frasi AI.
+    
+    Parametri:
+      - sentence: la frase da classificare.
+      - vectorizer: il TfidfVectorizer addestrato.
+      - ai_centroid: il centroide delle frasi AI (array).
+      - threshold: soglia per decidere se la frase è tipicamente AI (default 0.07).
+    
+    Restituisce:
+      - label: "ai" se la similarità è >= soglia, altrimenti "human".
+      - confidence: percentuale di similarità (0-100%).
+    """
+    sentence_vector = vectorizer.transform([sentence])
+    sim = cosine_similarity(sentence_vector, ai_centroid).flatten()[0]
+    confidence = sim * 100  # Convertiamo in percentuale
+    label = "ai" if sim >= threshold else "human"
+    return label, confidence
+
 
 # Assicurati di scaricare tutte le risorse necessarie per il tokenizing.
 nltk.download('punkt')
@@ -74,62 +115,35 @@ def extract_conversation(entry):
     
     return conversation
 
-def prepare_dataset(conversations):
-    human_sentences = []
-    ai_sentences = []
+def prepare_dataset_mix(conversations):
+    """
+    Prepara il dataset creando un campione per ogni richiesta e risposta.
+    Inoltre, calcola i sample weights basati sulla frequenza delle classi.
+    Questo approccio bilancia il dataset, dando più peso agli esempi meno numerosi.
+    """
+    texts = []
+    labels = []
     for convo in conversations:
         if convo["human_request"]:
-            human_sentences.append(clean_text(convo["human_request"]))
+            texts.append(clean_text(convo["human_request"]))
+            labels.append("human")
         if convo["ai_response"]:
-            ai_sentences.append(clean_text(convo["ai_response"]))
-    texts = human_sentences + ai_sentences
-    labels = ['human'] * len(human_sentences) + ['ai'] * len(ai_sentences)
-    print(f"Dataset preparato: {len(texts)} frasi totali.")
-    return texts, labels
+            texts.append(clean_text(convo["ai_response"]))
+            labels.append("ai")
+    counts = Counter(labels)
+    sample_weights = [1.0 / counts[label] for label in labels]
+    print("Distribuzione classi:", counts)
+    print(f"Dataset preparato: {len(texts)} campioni totali.")
+    return texts, labels, sample_weights
 
-def optimize_hyperparameters(texts, labels):
-    from sklearn.pipeline import Pipeline
-    pipeline = Pipeline([
-        ('vectorizer', TfidfVectorizer()),
-        ('classifier', MultinomialNB())
-    ])
-    
-    param_grid = {
-        'vectorizer__ngram_range': [(1,1), (1,2), (1,3)],
-        'vectorizer__max_features': [None, 5000, 10000],
-        'vectorizer__min_df': [1, 2, 5],
-        'vectorizer__max_df': [0.7, 0.9, 1.0],
-        'classifier__alpha': [0.1, 0.5, 1.0]
-    }
-    
-    grid_search = GridSearchCV(pipeline, param_grid, n_jobs=1)
-    grid_search.fit(texts, labels)
-    
-    print("Migliori parametri trovati:", grid_search.best_params_)
-    print("Miglior accuracy ottenuta:", grid_search.best_score_)
-    
-    best_model = grid_search.best_estimator_
-    save_checkpoint(best_model)
-    
-    return best_model
-
-def load_trained_model():
-    model = load_checkpoint()
-    if model is not None:
-        vectorizer = model.named_steps['vectorizer']
-        clf = model.named_steps['classifier']
-        return vectorizer, clf
-    else:
-        return None, None
-
-def train_classifier(texts, labels):
+def train_classifier_weighted(texts, labels, sample_weights):
     vectorizer = TfidfVectorizer(ngram_range=(1,2), max_features=5000, min_df=2, max_df=0.9)
     X = vectorizer.fit_transform(texts)
     
     clf = MultinomialNB(alpha=0.5)
-    clf.fit(X, labels)
+    clf.fit(X, labels, sample_weight=sample_weights)
     
-    print("Modello di fallback addestrato con successo.")
+    print("Modello addestrato con sample weights con successo.")
     
     with open("model.pkl", "wb") as f:
         pickle.dump((vectorizer, clf), f)
@@ -163,7 +177,6 @@ def classify_text_extended(user_input, vectorizer, clf, min_sentence_words=3, se
     for sentence in sentences:
         words = sentence.split()
         if len(words) < min_sentence_words:
-            # Saltiamo le frasi troppo brevi
             continue
         
         sentence_vector = vectorizer.transform([sentence])
@@ -190,7 +203,6 @@ def classify_text_extended(user_input, vectorizer, clf, min_sentence_words=3, se
     
     global_label_weighted = "ai" if global_prob_weighted >= sentence_threshold else "human"
     
-    # Votazione maggioritaria
     if vote_ai > vote_human:
         global_label_majority = "ai"
     elif vote_human > vote_ai:
@@ -200,7 +212,6 @@ def classify_text_extended(user_input, vectorizer, clf, min_sentence_words=3, se
     
     return analyzed_results, global_label_weighted, global_prob_weighted * 100, global_label_majority, {"ai": vote_ai, "human": vote_human}
 
-# Nuova funzione per estrarre il testo AI dall'input
 def extract_ai_text(text):
     """
     Estrae la parte del testo corrispondente alla risposta AI.
@@ -218,41 +229,62 @@ def extract_ai_text(text):
     else:
         return text
 
-def create_gui(conversations, vectorizer, clf):
+
+def create_gui(conversations, vectorizer, clf, ai_centroid):
     def on_classify():
         user_input = input_textbox.get("1.0", "end-1c")
         if not user_input.strip():
-            print_to_console("Errore: Inserisci del testo da analizzare.")
+            phrase_output_textbox.delete("1.0", "end")
+            final_output_textbox.delete("1.0", "end")
+            phrase_output_textbox.insert("end", "Errore: Inserisci del testo da analizzare.\n")
             return
 
-        # Estrai la parte AI dall'input per valutare solo la risposta
+        # Estrae la parte di risposta AI dal testo in input.
         ai_text = extract_ai_text(user_input)
+
+        # Pulizia delle aree di output.
+        phrase_output_textbox.delete("1.0", "end")
+        final_output_textbox.delete("1.0", "end")
         
-        results, global_label_weighted, global_prob_weighted, global_label_majority, majority_counts = classify_text_extended(ai_text, vectorizer, clf)
+        # === Sezione 1: Classificazione per Frase (Similarità) ===
+        phrase_output_textbox.insert("end", "=== Analisi per Frase (Similarità) ===\n\n")
+        similarity_results = []
+        sentences = nltk.sent_tokenize(ai_text)
+        for sentence in sentences:
+            words = sentence.split()
+            if len(words) < 3:  # Considera solo frasi con almeno 3 parole.
+                continue
+            # Calcola la similarità per ciascuna frase, utilizzando il threshold di 0.07.
+            sim_label, sim_confidence = classify_sentence_similarity(sentence, vectorizer, ai_centroid, threshold=0.07)
+            similarity_results.append((sentence, sim_label, sim_confidence))
         
-        output_textbox.delete("1.0", "end")
-        
-        # Sezione: Analisi per singola frase
-        output_textbox.insert("end", "=== Analisi per Frase ===\n\n")
-        if results:
-            for sent, label, ai_prob, weight in results:
-                output_textbox.insert("end", f"Frase: {sent}\n")
-                output_textbox.insert("end", f"  -> Classificazione: {label.upper()}\n")
-                output_textbox.insert("end", f"  -> Percentuale AI: {ai_prob:.2f}% | Peso: {weight}\n\n")
+        if similarity_results:
+            for sent, sim_label, sim_conf in similarity_results:
+                phrase_output_textbox.insert("end", f"Frase: {sent}\n")
+                phrase_output_textbox.insert("end", f"  -> Similarità: {sim_conf:.2f}% => Classificata come {sim_label.upper()}\n\n")
         else:
-            output_textbox.insert("end", "Nessuna frase analizzata (forse tutte troppo brevi?)\n")
+            phrase_output_textbox.insert("end", "Nessuna frase analizzata per similarità.\n")
         
-        # Sezione: Risultato globale
-        if global_label_weighted == "ai":
-            overall_confidence = global_prob_weighted
-            confidence_message = f"{overall_confidence:.2f}% (AI)"
+        # === Sezione 2: Risultato Complessivo Finale (Aggregazione e Ricalibrazione) ===
+        if similarity_results:
+            avg_similarity = sum(sim_conf for _, _, sim_conf in similarity_results) / len(similarity_results)
         else:
-            overall_confidence = 100 - global_prob_weighted
-            confidence_message = f"{overall_confidence:.2f}% (Human)"
+            avg_similarity = 0.0
+
+        # Applichiamo una funzione logistica per ricalibrare l'output.
+        # Con k = 0.2 e x₀ = 10, se avg_similarity = 10, p_AI = 50%.
+        # p_AI = 100 / (1 + exp(-0.2*(avg_similarity - 10)))
+        p_AI = 100 / (1 + math.exp(-0.2 * (avg_similarity - 10)))
+        p_Human = 100 - p_AI
+
+        final_classification = "AI" if p_AI >= 50 else "HUMAN"
+
+        final_output_textbox.insert("end", "=== Risultati Finali Aggregati ===\n\n")
+        final_output_textbox.insert("end", f"Media Similarità Aggregata (raw): {avg_similarity:.2f}%\n")
+        final_output_textbox.insert("end", f"Probabilità AI: {p_AI:.2f}%\n")
+        final_output_textbox.insert("end", f"Probabilità Human: {p_Human:.2f}%\n")
+        final_output_textbox.insert("end", f"Classificazione Finale: {final_classification}\n")
         
-        output_textbox.insert("end", "=== Risultato Globale ===\n")
-        output_textbox.insert("end", f"Media Ponderata: {global_label_weighted.upper()} (Confidence: {confidence_message})\n")
-        output_textbox.insert("end", f"Votazione Maggioritaria: {global_label_majority.upper()} (AI: {majority_counts['ai']}, Human: {majority_counts['human']})\n")
         print_to_console("Analisi completata.")
         
     def print_to_console(message):
@@ -260,44 +292,60 @@ def create_gui(conversations, vectorizer, clf):
         console_textbox.insert(tk.END, message + "\n")
         console_textbox.yview(tk.END)
         console_textbox.config(state=tk.DISABLED)
-        
+
+    # Creazione della finestra principale
     root = tk.Tk()
     root.title("Analizzatore di Conversazioni AI")
     
-    instructions = tk.Label(root,
-        text="Istruzioni:\n1. Inserisci il testo da analizzare.\n2. Premi 'Classifica'.\n3. Verranno mostrate l'analisi per singola frase e l'aggregazione globale (media pesata e voto maggioritario).",
-        font=("Arial", 12), justify="left")
-    instructions.grid(row=0, column=0, padx=10, pady=10, sticky="w")
+    instructions = tk.Label(
+        root,
+        text="Istruzioni:\n1. Inserisci il testo da analizzare.\n2. Premi 'Classifica'.\n"
+             "Verranno mostrate due aree di output:\n"
+             "   - Classificazione Frase per Frase\n"
+             "   - Risultati Finali Aggregati (probabilità ricalibrate)",
+        font=("Arial", 12), justify="left"
+    )
+    instructions.grid(row=0, column=0, columnspan=2, padx=10, pady=10, sticky="w")
     
     input_label = tk.Label(root, text="Testo di input:")
-    input_label.grid(row=1, column=0, padx=10, pady=5, sticky="w")
-    input_textbox = scrolledtext.ScrolledText(root, width=60, height=10)
-    input_textbox.grid(row=2, column=0, padx=10, pady=5)
+    input_label.grid(row=1, column=0, columnspan=2, padx=10, pady=5, sticky="w")
+    input_textbox = scrolledtext.ScrolledText(root, width=80, height=10)
+    input_textbox.grid(row=2, column=0, columnspan=2, padx=10, pady=5)
     
     classify_button = tk.Button(root, text="Classifica", command=on_classify, font=("Arial", 12))
-    classify_button.grid(row=3, column=0, padx=10, pady=10)
+    classify_button.grid(row=3, column=0, columnspan=2, padx=10, pady=10)
     
-    output_label = tk.Label(root, text="Risultati della classificazione:")
-    output_label.grid(row=4, column=0, padx=10, pady=5, sticky="w")
-    output_textbox = scrolledtext.ScrolledText(root, width=60, height=10)
-    output_textbox.grid(row=5, column=0, padx=10, pady=5)
+    # Area di output per la classificazione frase per frase
+    phrase_label = tk.Label(root, text="Classificazione Frase per Frase:")
+    phrase_label.grid(row=4, column=0, padx=10, pady=5, sticky="w")
+    phrase_output_textbox = scrolledtext.ScrolledText(root, width=60, height=10)
+    phrase_output_textbox.grid(row=5, column=0, padx=10, pady=5)
     
-    console_label = tk.Label(root, text="Log dell'elaborazione:")
-    console_label.grid(row=6, column=0, padx=10, pady=5, sticky="w")
-    console_textbox = scrolledtext.ScrolledText(root, width=60, height=10, state=tk.DISABLED)
-    console_textbox.grid(row=7, column=0, padx=10, pady=5)
+    # Area di output per i risultati finali aggregati
+    final_label = tk.Label(root, text="Risultati Finali Aggregati:")
+    final_label.grid(row=4, column=1, padx=10, pady=5, sticky="w")
+    final_output_textbox = scrolledtext.ScrolledText(root, width=60, height=10)
+    final_output_textbox.grid(row=5, column=1, padx=10, pady=5)
+    
+    # Area per il log (facoltativa)
+    console_label = tk.Label(root, text="Log di elaborazione:")
+    console_label.grid(row=6, column=0, columnspan=2, padx=10, pady=5, sticky="w")
+    console_textbox = scrolledtext.ScrolledText(root, width=125, height=10, state=tk.DISABLED)
+    console_textbox.grid(row=7, column=0, columnspan=2, padx=10, pady=5)
     
     print_to_console(f"Elementi caricati: {len(conversations)}")
-    texts, _ = prepare_dataset(conversations)
-    print_to_console(f"Dataset preparato: {len(texts)} frasi totali.")
+    texts_temp, labels_temp, sample_weights = prepare_dataset_mix(conversations)
+    print_to_console(f"Dataset preparato: {len(texts_temp)} campioni totali.")
     
     root.mainloop()
+
+
+
 def save_model_with_threshold(model, vectorizer, optimal_threshold, filename="model_with_threshold.pkl"):
     with open(filename, "wb") as f:
         pickle.dump({"model": model, "vectorizer": vectorizer, "threshold": optimal_threshold}, f)
     print("Modello e soglia ottimale salvati in", filename)
 
-# Carica il modello insieme alla soglia ottimale.
 def load_model_with_threshold(filename="model_with_threshold.pkl"):
     if os.path.exists(filename):
         with open(filename, "rb") as f:
@@ -307,6 +355,7 @@ def load_model_with_threshold(filename="model_with_threshold.pkl"):
     else:
         print("Nessun file di modello con soglia trovato.")
         return None, None, None
+
 def main():
     # Percorso della cartella dati
     data_folder = r"C:\Users\Alberto\Desktop\AiAnalyzer\data"
@@ -317,48 +366,62 @@ def main():
     conversations = [extract_conversation(entry) for entry in data]
     valid_conversations = [convo for convo in conversations if convo["human_request"] or convo["ai_response"]]
     
-    # Prepara il dataset
-    texts, labels = prepare_dataset(valid_conversations)
+    # Prepara il dataset "mix" con sample weights
+    texts, labels, sample_weights = prepare_dataset_mix(valid_conversations)
     
     # Suddivide il dataset in training e validation set (80/20)
-    texts_train, texts_val, labels_train, labels_val = train_test_split(
-        texts, labels, test_size=0.2, random_state=42
+    texts_train, texts_val, labels_train, labels_val, weights_train, weights_val = train_test_split(
+        texts, labels, sample_weights, test_size=0.2, random_state=42
     )
     
-    # Carica il modello addestrato se esiste, altrimenti esegue l'ottimizzazione
+    # Carica il modello se esiste, altrimenti addestra con i sample weights
     model = load_checkpoint()
     if model is not None:
         vectorizer = model.named_steps['vectorizer']
         clf = model.named_steps['classifier']
     else:
-        model = optimize_hyperparameters(texts_train, labels_train)
-        vectorizer = model.named_steps['vectorizer']
-        clf = model.named_steps['classifier']
+        vectorizer, clf = train_classifier_weighted(texts_train, labels_train, weights_train)
     
-    # Ottimizzazione della soglia sul validation set:
+    # Ottimizzazione della soglia sul validation set con calibrazione:
     X_val = vectorizer.transform(texts_val)
+    calibrated_clf = CalibratedClassifierCV(estimator=clf, method='sigmoid', cv='prefit')
+    calibrated_clf.fit(X_val, labels_val)
+    clf = calibrated_clf
+    
     probabilities = clf.predict_proba(X_val)
     ai_index = list(clf.classes_).index("ai")
     ai_probs = probabilities[:, ai_index]
+    
+    plt.figure(figsize=(8,6))
+    plt.hist(ai_probs, bins=20, color='skyblue', edgecolor='black')
+    plt.title("Distribuzione delle probabilità 'AI' (Calibrato)")
+    plt.xlabel("Probabilità AI")
+    plt.ylabel("Frequenza")
+    plt.grid(True)
+    plt.show()
     
     precision, recall, thresholds = precision_recall_curve(labels_val, ai_probs, pos_label="ai")
     f1_scores = (2 * precision * recall) / (precision + recall + 1e-8)
     best_threshold_index = np.argmax(f1_scores)
     optimal_threshold = thresholds[best_threshold_index]
-    
     print(f"Soglia ottimale trovata: {optimal_threshold:.2f}")
     
-    # (Opzionale) Valutazione sulle predizioni del validation set con la soglia ottimale
     def classify_with_threshold(probs, threshold):
         return ["ai" if prob >= threshold else "human" for prob in probs]
+    
     y_val_pred = classify_with_threshold(ai_probs, optimal_threshold)
     print(classification_report(labels_val, y_val_pred))
     
-    # Salva il modello insieme alla soglia ottimale, se desiderato
     save_model_with_threshold(model, vectorizer, optimal_threshold, filename="model_with_threshold.pkl")
     
-    # Avvia la GUI per l'inferenza
-    create_gui(valid_conversations, vectorizer, clf)
+    # Calcolo del centroide AI: rappresenta la "media" (vettoriale) delle risposte AI
+    ai_centroid = compute_ai_centroid(vectorizer, valid_conversations)
+    if ai_centroid is None:
+        print("Impossibile calcolare il centroide AI. Assicurati di avere risposte AI valide nel dataset.")
+    
+    # Avvio della GUI, passando anche il centroide AI per la classificazione per similarità
+    create_gui(valid_conversations, vectorizer, clf, ai_centroid)
 
 if __name__ == "__main__":
     main()
+
