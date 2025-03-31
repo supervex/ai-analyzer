@@ -1,34 +1,36 @@
-# AI Analyzer
+# AI Analyzer  
 
-AI Analyzer è un'applicazione sviluppata in Python che analizza conversazioni tra esseri umani e assistenti intelligenti (AI). Utilizza un modello di machine learning per identificare se una risposta proviene da un'intelligenza artificiale, migliorando così la comprensione dei pattern nelle risposte AI e aiutando nella rilevazione di contenuti generati automaticamente.
+AI Analyzer è un'applicazione in Python progettata per analizzare conversazioni tra esseri umani e assistenti intelligenti. Grazie all'uso del machine learning, il programma è in grado di identificare se una risposta è stata generata da un'intelligenza artificiale, contribuendo alla comprensione dei pattern tipici delle risposte AI e supportando la rilevazione di contenuti generati automaticamente.  
 
-## Funzionalità
+## 🚀 Funzionalità  
 
-- **Analisi delle risposte AI**: Il programma esamina le risposte generate dall'intelligenza artificiale e confronta con le domande poste dagli esseri umani.
-- **Modelli di machine learning**: Utilizza modelli pre-addestrati per rilevare risposte AI, come classificatori basati su algoritmi di machine learning.
-- **Interfaccia grafica**: Ha una GUI semplice che permette di caricare e analizzare conversazioni.
+- **🔍 Riconoscimento delle risposte AI**: Analizza le risposte nelle conversazioni e determina se provengono da un assistente AI o da un essere umano.  
+- **🤖 Machine Learning**: Utilizza modelli di apprendimento automatico pre-addestrati per effettuare la classificazione.  
+- **🖥️ Interfaccia Grafica Intuitiva**: Include una GUI user-friendly basata su Tkinter per caricare e analizzare i file di conversazione.  
 
-## Come funziona
+## ⚙️ Come funziona  
 
-L'applicazione carica un file di conversazione che contiene le domande degli utenti e le risposte generate dall'intelligenza artificiale. Successivamente, il programma analizza i dati utilizzando un modello di machine learning per determinare se una risposta è generata da un AI o se è un'istanza umana.
+1. 📂 L'utente carica un file contenente un file di testo.  
+2. 🔢 Il programma elabora i dati e li vettorizza per renderli compatibili con il modello di machine learning.  
+3. 🏷️ Il classificatore determina se ciascuna frase è stata generata da un'AI o da un essere umano.  
+4. 📊 I risultati vengono mostrati all'utente tramite l'interfaccia grafica.  
 
-### Modelli
+## 🧠 Modelli Utilizzati  
 
-- I modelli pre-addestrati, come `vectorizer.pkl` e `classifier_model.pkl`, sono utilizzati per eseguire l'analisi. Puoi scaricare questi modelli dalla repository e utilizzarli con il programma.
+L'analisi si basa su modelli pre-addestrati, tra cui:  
 
-## Prerequisiti
+- **Vectorizer.pkl**: Trasforma il testo in una rappresentazione numerica.  
+- **Classifier_model.pkl**: Modello di classificazione che identifica le risposte AI.  
 
-Prima di eseguire l'applicazione, assicurati di avere installato:
+Puoi scaricare questi modelli dalla repository ufficiale del progetto per utilizzarli con l'applicazione.  
 
-- Python 3.7+
-- Le seguenti librerie:
-  - `scikit-learn`
-  - `numpy`
-  - `tkinter`
-  - `joblib`
-  - `git-lfs` (per i file di grandi dimensioni come i modelli)
+## 📋 Prerequisiti  
 
-Puoi installare le dipendenze usando il file `requirements.txt`:
+Per eseguire AI Analyzer, assicurati di avere installato:  
 
-```bash
-pip install -r requirements.txt
+- **Python 3.7+**  
+- **Librerie richieste** (puoi installarle con il seguente comando):  
+
+  ```bash
+  pip install -r requirements.txt
+
